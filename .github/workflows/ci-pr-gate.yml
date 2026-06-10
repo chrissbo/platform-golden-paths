@@ -1,0 +1,205 @@
+# Pipeline 2 — PR Quality Gate (<8 min budget).
+#
+# Purpose: deeper checks before merge. Required status check on PRs.
+# Stages run in parallel where possible; failure of any blocks merge.
+#
+# Stages:
+#   - sast           Semgrep OSS, diff-aware, with the curated rule pack.
+#   - vuln           govulncheck (reachability-aware).
+#   - tests          full unit + integration via testcontainers-go (build tags).
+#   - build-image    `ko` build (no push) — smoke that the image actually builds.
+#   - iac            Trivy config + Checkov for any infra files.
+#   - kyverno        kyverno test against any policies in the repo.
+#
+# Mirrors research/cicd-toolchain/pipeline-architecture.md §"Pipeline 2".
+# Pact / contract testing is its own job that runs only when consumer pacts
+# are present in the repo (`testdata/pacts/**` convention).
+
+name: ci-pr-gate
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        type: string
+        default: "1.23"
+      semgrep-config:
+        description: "Semgrep config — local path or registry ref"
+        type: string
+        default: "p/golang p/security-audit p/secrets"
+      run-pact:
+        description: "Whether to run consumer-side Pact verification"
+        type: boolean
+        default: false
+      run-iac:
+        description: "Whether to run Trivy config + Checkov"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  sast:
+    name: sast (semgrep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    container:
+      image: returntocorp/semgrep:1.86.0
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # diff-aware needs history
+
+      - name: semgrep diff-aware scan
+        # Pass user input via env vars so it can't be interpolated into a shell.
+        env:
+          SEMGREP_CONFIG: ${{ inputs.semgrep-config }}
+          BASELINE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "${BASELINE:-}" ]; then
+            semgrep ci --config "$SEMGREP_CONFIG" --baseline-commit "$BASELINE"
+          else
+            semgrep ci --config "$SEMGREP_CONFIG"
+          fi
+
+  vuln:
+    name: vuln (govulncheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup-go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: true
+
+      - name: govulncheck
+        run: |
+          set -euo pipefail
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  tests:
+    name: tests (unit + integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup-go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: true
+
+      - name: go test (unit + integration)
+        # Integration tests are gated by the `integration` build tag and use
+        # testcontainers-go. The runner has Docker available by default.
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -tags=unit -timeout=4m ./...
+          go test -race -count=1 -tags=integration -timeout=6m ./...
+
+  build-image:
+    name: build-image (ko, no push)
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup-go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: true
+
+      - name: setup ko
+        uses: ko-build/setup-ko@v0.7
+
+      - name: ko build (local only)
+        env:
+          KO_DOCKER_REPO: ko.local
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # Build everything that has a main package; if there are none, succeed.
+          mains=$(go list -f '{{ if eq .Name "main" }}{{ .ImportPath }}{{ end }}' ./... | tr '\n' ' ')
+          if [ -z "$(echo "$mains" | tr -d '[:space:]')" ]; then
+            echo "no main packages — nothing to build"
+            exit 0
+          fi
+          # shellcheck disable=SC2086
+          ko build --local --bare --tags="ci-${RUN_ID}" $mains
+
+  iac:
+    name: iac (trivy + checkov)
+    if: ${{ inputs.run-iac }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: trivy config
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: config
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+
+      - name: checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          quiet: true
+          soft_fail: false
+
+  kyverno:
+    name: kyverno (policy tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install kyverno cli
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/kyverno/kyverno/releases/download/v1.12.6/kyverno-cli_v1.12.6_linux_x86_64.tar.gz \
+            | tar -xz -C /usr/local/bin kyverno
+
+      - name: kyverno test
+        run: |
+          set -euo pipefail
+          # Run only if the repo carries kyverno tests; otherwise pass.
+          if find . -type f -name "kyverno-test.yaml" -not -path './.git/*' | grep -q .; then
+            kyverno test .
+          else
+            echo "no kyverno tests in repo — skipping"
+          fi
+
+  pact:
+    name: pact (consumer)
+    if: ${{ inputs.run-pact }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup-go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: true
+
+      - name: go test (pact tag)
+        run: go test -race -count=1 -tags=pact -timeout=4m ./...

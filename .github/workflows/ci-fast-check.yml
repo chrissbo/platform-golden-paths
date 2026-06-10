@@ -1,0 +1,120 @@
+# Pipeline 1 — Developer Fast-Check (<3 min budget).
+#
+# Purpose: catch the 80% of obvious defects before deeper gates run.
+# Runs on every push and on every PR. Cancelled in flight on new pushes.
+#
+# Stages:
+#   - format/lint    golangci-lint v2 with the centrally pinned config.
+#   - secrets        gitleaks against the diff.
+#   - tests          short race-detected unit tests.
+#   - build          `go build ./...` (smoke; no image push).
+#
+# Mirrors research/cicd-toolchain/pipeline-architecture.md §"Pipeline 1".
+# Consumed by service repos via:
+#
+#   jobs:
+#     fast-check:
+#       uses: chrissbo/platform-golden-paths/.github/workflows/ci-fast-check.yml@<sha>
+
+name: ci-fast-check
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        description: "Go toolchain version"
+        type: string
+        default: "1.23"
+      golangci-lint-version:
+        description: "golangci-lint v2 release"
+        type: string
+        default: "v2.1.6"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # gitleaks needs history; lint diff-aware also benefits
+
+      - name: setup-go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: true
+
+      - name: fetch centrally pinned lint config
+        # The service repo doesn't carry its own .golangci.yml — the golden-paths
+        # config is the source of truth.
+        env:
+          PINNED_SHA: ${{ github.workflow_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          curl -fsSL \
+            "https://raw.githubusercontent.com/chrissbo/platform-golden-paths/${PINNED_SHA}/config/golangci.yml" \
+            -o .golangci.yml || \
+          curl -fsSL \
+            "https://raw.githubusercontent.com/chrissbo/platform-golden-paths/main/config/golangci.yml" \
+            -o .golangci.yml
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: ${{ inputs.golangci-lint-version }}
+          args: --timeout=5m
+
+  secrets:
+    name: secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup-go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: true
+
+      - name: go test (short, race)
+        run: go test -race -short -timeout=4m ./...
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup-go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: true
+
+      - name: go build
+        run: go build ./...
