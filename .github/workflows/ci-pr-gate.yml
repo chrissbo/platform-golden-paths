@@ -22,7 +22,7 @@ on:
     inputs:
       go-version:
         type: string
-        default: "1.25"
+        default: "1.25.11"
       semgrep-config:
         description: "Semgrep config — local path or registry ref"
         type: string
