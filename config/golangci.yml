@@ -1,0 +1,59 @@
+# Centrally pinned golangci-lint v2 config used across all services.
+# Consumed by platform-golden-paths/.github/workflows/ci-fast-check.yml.
+#
+# Strategy: a small fast core for PR-time + a deeper pass at nightly.
+# Anything noisier than this gets discussed before being added — the lint pass
+# is meant to fail fast on real defects, not on style debates.
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  default: none
+  enable:
+    # Correctness
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    # Style/safety with low false-positive rates
+    - gocritic
+    - misspell
+    - nolintlint
+    - revive
+    - unconvert
+    # Security
+    - gosec
+
+  settings:
+    gosec:
+      excludes:
+        # G104: errors unhandled — covered by errcheck
+        - G104
+    revive:
+      rules:
+        - name: var-naming
+        - name: exported
+          arguments: [{ disabled: true }]
+    staticcheck:
+      checks: ["all"]
+
+  exclusions:
+    rules:
+      # Tests can be a bit looser — relax a few rules in *_test.go.
+      - path: _test\.go
+        linters: [gosec, gocritic, errcheck]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
