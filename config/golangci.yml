@@ -38,8 +38,6 @@ linters:
     revive:
       rules:
         - name: var-naming
-        - name: exported
-          arguments: [{ disabled: true }]
     staticcheck:
       checks: ["all"]
 
