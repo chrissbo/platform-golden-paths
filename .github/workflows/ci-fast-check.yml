@@ -24,11 +24,11 @@ on:
       go-version:
         description: "Go toolchain version"
         type: string
-        default: "1.25"
+        default: "1.25.11"
       golangci-lint-version:
         description: "golangci-lint v2 release"
         type: string
-        default: "v2.1.6"
+        default: "v2.5.0"
 
 permissions:
   contents: read
