@@ -24,7 +24,7 @@ on:
       go-version:
         description: "Go toolchain version"
         type: string
-        default: "1.23"
+        default: "1.24"
       golangci-lint-version:
         description: "golangci-lint v2 release"
         type: string
@@ -52,20 +52,22 @@ jobs:
 
       - name: fetch centrally pinned lint config
         # The service repo doesn't carry its own .golangci.yml — the golden-paths
-        # config is the source of truth.
-        env:
-          PINNED_SHA: ${{ github.workflow_sha || github.sha }}
-        run: |
-          set -euo pipefail
-          curl -fsSL \
-            "https://raw.githubusercontent.com/chrissbo/platform-golden-paths/${PINNED_SHA}/config/golangci.yml" \
-            -o .golangci.yml || \
-          curl -fsSL \
-            "https://raw.githubusercontent.com/chrissbo/platform-golden-paths/main/config/golangci.yml" \
-            -o .golangci.yml
+        # config is the source of truth. Sparse-checkout the just the config
+        # at the pinned SHA so we don't pull untrusted files.
+        uses: actions/checkout@v4
+        with:
+          repository: chrissbo/platform-golden-paths
+          ref: main
+          path: .golden-paths
+          sparse-checkout: |
+            config/golangci.yml
+          sparse-checkout-cone-mode: false
+
+      - name: install lint config
+        run: cp .golden-paths/config/golangci.yml .golangci.yml
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: ${{ inputs.golangci-lint-version }}
           args: --timeout=5m
