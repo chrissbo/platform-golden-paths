@@ -27,17 +27,10 @@ jobs:
     name: ai review (pr-agent)
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: ${{ github.event_name == 'pull_request' }}
+    # Job-level: secrets context is allowed here, step-level it is not.
+    if: ${{ github.event_name == 'pull_request' && secrets.ANTHROPIC_API_KEY != '' }}
     steps:
-      - name: skip if no anthropic key
-        if: ${{ secrets.ANTHROPIC_API_KEY == '' }}
-        run: |
-          echo "::notice::ANTHROPIC_API_KEY not set — skipping PR-Agent review."
-          echo "Set the secret at the repo or org level to enable Mode 2 AI review."
-          exit 0
-
       - name: pr-agent review
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
         # Pinned to qodo-ai/pr-agent v0.36.0 — supply-chain hygiene for an
         # action that runs with secret access. Bump via Renovate / Dependabot.
         uses: qodo-ai/pr-agent@ffe1f89a4dafc7d8e88b9cf010a3233e30b49f43
@@ -50,3 +43,14 @@ jobs:
           GITHUB_ACTION_CONFIG.AUTO_REVIEW: "true"
           GITHUB_ACTION_CONFIG.AUTO_DESCRIBE: "false"
           GITHUB_ACTION_CONFIG.AUTO_IMPROVE: "false"
+
+  notify-skipped:
+    name: ai review (skipped — no key)
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    if: ${{ github.event_name == 'pull_request' && secrets.ANTHROPIC_API_KEY == '' }}
+    steps:
+      - name: notice
+        run: |
+          echo "::notice::ANTHROPIC_API_KEY not set — skipping PR-Agent review."
+          echo "Set the secret at the repo or org level to enable Mode 2 AI review."
