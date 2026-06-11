@@ -93,18 +93,16 @@ jobs:
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_USER" --password-stdin
 
       - name: ko build + push (digest)
-        # KO_DOCKER_REPO is the OWNING repo — ko appends '/<image-name>' to
-        # produce the final image path.
+        # ko's --bare publishes directly to KO_DOCKER_REPO without appending
+        # the import-path suffix. So KO_DOCKER_REPO must be the full image
+        # path, INCLUDING the image name.
         id: publish
         env:
-          KO_DOCKER_REPO: ghcr.io/${{ github.repository_owner }}
-          IMAGE_NAME: ${{ inputs.image-name }}
+          KO_DOCKER_REPO: ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}
           MAIN_PKG: ${{ inputs.ko-main-package }}
           GIT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          # Tag with the short sha and the full sha; --bare collapses the
-          # path so we don't end up with .../ledger-service/ledger-service.
           short="${GIT_SHA:0:7}"
           ref=$(ko build --bare --image-refs=image-refs.txt \
             --tags="$short,sha-$GIT_SHA,latest" "$MAIN_PKG")
