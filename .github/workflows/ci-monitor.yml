@@ -1,0 +1,88 @@
+# Pipeline 6 — Continuous monitoring (sliver).
+#
+# Re-runs Semgrep + govulncheck on push-to-main and on a daily schedule, so
+# the GitHub Security tab on the default branch always reflects the current
+# state of the codebase against the latest CVE feed. Without this, SARIF
+# from PR-time scans is keyed to the pull/<n>/merge ref and the main-branch
+# Security tab eventually empties out.
+#
+# Mirrors research/cicd-toolchain/pipeline-architecture.md §"Pipeline 6"
+# (Continuous), thin slice — just SAST + SCA against main. The full Pipeline
+# 6 also covers Argo CD reconciliation, Trivy operator on the cluster, and
+# Datadog SLO monitors; those land in Phase 4.
+
+name: ci-monitor
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        type: string
+        default: "1.25.11"
+      semgrep-config:
+        type: string
+        default: "p/golang p/security-audit p/secrets"
+
+permissions:
+  contents: read
+  security-events: write   # SARIF upload to the Security tab
+
+jobs:
+  sast-monitor:
+    name: monitor (semgrep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    container:
+      image: returntocorp/semgrep:1.86.0
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: semgrep full scan (sarif)
+        env:
+          SEMGREP_CONFIG: ${{ inputs.semgrep-config }}
+        run: |
+          set -euo pipefail
+          # Full scan, not diff-aware — this is the main-branch baseline.
+          # Always emit SARIF; do not fail the workflow on findings (the gate
+          # already failed-them-out at PR time; here we only refresh state).
+          semgrep ci --config "$SEMGREP_CONFIG" --sarif --output=semgrep.sarif || true
+
+      - name: upload semgrep sarif
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  vuln-monitor:
+    name: monitor (govulncheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup-go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: true
+
+      - name: install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: govulncheck (sarif → security tab)
+        run: |
+          set -euo pipefail
+          GOVULNCHECK="$(go env GOPATH)/bin/govulncheck"
+          # Re-evaluation against the latest vuln feed; never fail this run —
+          # it's a monitor, not a gate.
+          $GOVULNCHECK -format sarif ./... > govulncheck.sarif || true
+
+      - name: upload govulncheck sarif
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: govulncheck.sarif
+          category: govulncheck
