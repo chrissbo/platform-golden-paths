@@ -1,0 +1,14 @@
+# Dependabot config for platform-golden-paths.
+# Bumps the actions used inside the reusable workflows.
+# Phase 1.5 of the local pipeline simulation.
+
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"

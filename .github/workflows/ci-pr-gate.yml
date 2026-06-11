@@ -38,6 +38,7 @@ on:
 
 permissions:
   contents: read
+  security-events: write   # SARIF upload to the GitHub Security tab
 
 jobs:
   sast:
@@ -52,18 +53,30 @@ jobs:
         with:
           fetch-depth: 0  # diff-aware needs history
 
-      - name: semgrep diff-aware scan
+      - name: semgrep diff-aware scan (sarif)
         # Pass user input via env vars so it can't be interpolated into a shell.
+        # Always emit SARIF; non-zero exit on findings is enforced by the second
+        # invocation below so the gate still blocks merge on real findings.
         env:
           SEMGREP_CONFIG: ${{ inputs.semgrep-config }}
           BASELINE: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
           if [ -n "${BASELINE:-}" ]; then
+            semgrep ci --config "$SEMGREP_CONFIG" --baseline-commit "$BASELINE" \
+              --sarif --output=semgrep.sarif || true
             semgrep ci --config "$SEMGREP_CONFIG" --baseline-commit "$BASELINE"
           else
+            semgrep ci --config "$SEMGREP_CONFIG" --sarif --output=semgrep.sarif || true
             semgrep ci --config "$SEMGREP_CONFIG"
           fi
+
+      - name: upload semgrep sarif
+        if: always()  # populate Security tab even when the gate fails
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
 
   vuln:
     name: vuln (govulncheck)
@@ -79,11 +92,29 @@ jobs:
           go-version: ${{ inputs.go-version }}
           cache: true
 
-      - name: govulncheck
+      - name: install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: govulncheck (sarif → security tab)
+        # Always emit SARIF first so findings populate the Security tab even
+        # when the gate fails. The second invocation is the actual gate.
         run: |
           set -euo pipefail
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+          GOVULNCHECK="$(go env GOPATH)/bin/govulncheck"
+          $GOVULNCHECK -format sarif ./... > govulncheck.sarif || true
+
+      - name: upload govulncheck sarif
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: govulncheck.sarif
+          category: govulncheck
+
+      - name: govulncheck (gate)
+        run: |
+          set -euo pipefail
+          GOVULNCHECK="$(go env GOPATH)/bin/govulncheck"
+          $GOVULNCHECK ./...
 
   tests:
     name: tests (unit + integration)
