@@ -1,0 +1,52 @@
+# Mode 2 AI review bot — PR-Agent (qodo-ai/pr-agent, Apache-2.0).
+#
+# Posts inline review comments on every PR using a configurable LLM.
+# The workflow is opt-in: it only runs when the caller passes
+# `secrets: inherit` and the calling repo has ANTHROPIC_API_KEY set.
+# Without the key, this is a no-op (skip step) — the rest of the
+# pipeline is unaffected.
+#
+# This is the Mode 2 row in research/cicd-toolchain/local-simulation-feasibility.md
+# §"AI in the developer workflow". It NEVER pushes commits; it only comments.
+
+name: ci-pr-review
+
+on:
+  workflow_call:
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write   # post review comments
+  issues: write          # PR-Agent uses the issues API for comments
+
+jobs:
+  review:
+    name: ai review (pr-agent)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - name: skip if no anthropic key
+        if: ${{ secrets.ANTHROPIC_API_KEY == '' }}
+        run: |
+          echo "::notice::ANTHROPIC_API_KEY not set — skipping PR-Agent review."
+          echo "Set the secret at the repo or org level to enable Mode 2 AI review."
+          exit 0
+
+      - name: pr-agent review
+        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        # Pinned to qodo-ai/pr-agent v0.36.0 — supply-chain hygiene for an
+        # action that runs with secret access. Bump via Renovate / Dependabot.
+        uses: qodo-ai/pr-agent@ffe1f89a4dafc7d8e88b9cf010a3233e30b49f43
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CONFIG.MODEL: anthropic/claude-sonnet-4-5
+          ANTHROPIC.KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Be conservative — review only, no auto-improve commits, no
+          # describe-overwrite. We can dial up after we see the noise floor.
+          GITHUB_ACTION_CONFIG.AUTO_REVIEW: "true"
+          GITHUB_ACTION_CONFIG.AUTO_DESCRIBE: "false"
+          GITHUB_ACTION_CONFIG.AUTO_IMPROVE: "false"
