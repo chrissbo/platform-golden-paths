@@ -1,0 +1,189 @@
+# Pipeline 3 — Post-Merge supply chain (<15 min budget).
+#
+# Purpose: turn a merged commit on main into an attestable image.
+# Runs only on push to main. Stages:
+#
+#   1. ko build → push to GHCR with the immutable digest as the canonical ref.
+#   2. Syft SBOM (CycloneDX + SPDX) attached to the image as a Cosign attestation.
+#   3. Cosign keyless sign of the image (Fulcio cert + Rekor entry).
+#   4. (caller wires SLSA L3 provenance via the official slsa-github-generator
+#       trusted workflow — see ledger-service ci.yml; it cannot be a step here).
+#   5. Optional Dependency-Track upload of the SBOM (skipped if no endpoint).
+#
+# Mirrors research/cicd-toolchain/pipeline-architecture.md §"Pipeline 3" and
+# the supply-chain stack in research/cicd-toolchain/04-supply-chain.md.
+
+name: ci-post-merge
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        type: string
+        default: "1.25.11"
+      image-name:
+        description: "Image basename (lower case). Final ref is ghcr.io/<repo>/<image-name>."
+        type: string
+        required: true
+      ko-main-package:
+        description: "Go import path of the main package to build (e.g. ./cmd/ledger-service)."
+        type: string
+        required: true
+      dependency-track-url:
+        description: "Optional Dependency-Track API base URL. Empty disables upload."
+        type: string
+        default: ""
+      dependency-track-project-name:
+        description: "Project name in Dependency-Track."
+        type: string
+        default: ""
+      dependency-track-project-version:
+        description: "Project version (defaults to the commit SHA)."
+        type: string
+        default: ""
+    outputs:
+      image:
+        description: "Fully qualified image reference with digest."
+        value: ${{ jobs.build.outputs.image }}
+      digest:
+        description: "sha256:<hex> of the pushed image."
+        value: ${{ jobs.build.outputs.digest }}
+    secrets:
+      DEPENDENCY_TRACK_API_KEY:
+        required: false
+
+# These are the permissions the reusable workflow itself NEEDS. The caller
+# must grant them on its own job — GitHub uses the intersection.
+permissions:
+  contents: read
+  packages: write          # push to ghcr.io
+  id-token: write          # GitHub OIDC for Sigstore keyless
+  attestations: write      # cosign attestations + future workload attestations
+  security-events: write   # SARIF from any scan steps that opt in here later
+
+jobs:
+  build:
+    name: build + sign + attest
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
+      digest: ${{ steps.publish.outputs.digest }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup-go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: true
+
+      - name: setup ko
+        uses: ko-build/setup-ko@v0.7
+
+      - name: log in to ghcr
+        # ko reads $DOCKER_CONFIG / docker login state. We log in via the
+        # built-in GITHUB_TOKEN — no PAT, no long-lived secret.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_USER" --password-stdin
+
+      - name: ko build + push (digest)
+        # KO_DOCKER_REPO is the OWNING repo — ko appends '/<image-name>' to
+        # produce the final image path.
+        id: publish
+        env:
+          KO_DOCKER_REPO: ghcr.io/${{ github.repository_owner }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+          MAIN_PKG: ${{ inputs.ko-main-package }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Tag with the short sha and the full sha; --bare collapses the
+          # path so we don't end up with .../ledger-service/ledger-service.
+          short="${GIT_SHA:0:7}"
+          ref=$(ko build --bare --image-refs=image-refs.txt \
+            --tags="$short,sha-$GIT_SHA,latest" "$MAIN_PKG")
+          # ref is the *digest* form, e.g. ghcr.io/<owner>/<image>@sha256:...
+          echo "image=$ref" | tee -a "$GITHUB_OUTPUT"
+          digest="${ref#*@}"
+          echo "digest=$digest" | tee -a "$GITHUB_OUTPUT"
+
+      - name: install syft
+        uses: anchore/sbom-action/download-syft@v0.17.5
+
+      - name: generate SBOMs
+        env:
+          IMAGE: ${{ steps.publish.outputs.image }}
+        run: |
+          set -euo pipefail
+          syft "$IMAGE" -o cyclonedx-json=sbom.cdx.json
+          syft "$IMAGE" -o spdx-json=sbom.spdx.json
+
+      - name: install cosign
+        uses: sigstore/cosign-installer@v3.7.0
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: cosign sign image (keyless)
+        env:
+          IMAGE: ${{ steps.publish.outputs.image }}
+        # No --key, no static credential. Cosign mints a short-lived Fulcio
+        # cert from the GitHub OIDC token and writes the signature plus a
+        # Rekor transparency-log entry. The signing identity is the workflow
+        # ref ('repo:chrissbo/ledger-service:ref:refs/heads/main').
+        run: |
+          set -euo pipefail
+          cosign sign --yes "$IMAGE"
+
+      - name: cosign attest SBOMs
+        env:
+          IMAGE: ${{ steps.publish.outputs.image }}
+        run: |
+          set -euo pipefail
+          cosign attest --yes \
+            --predicate sbom.cdx.json \
+            --type cyclonedx \
+            "$IMAGE"
+          cosign attest --yes \
+            --predicate sbom.spdx.json \
+            --type spdx \
+            "$IMAGE"
+
+      - name: upload SBOMs as workflow artifacts
+        # Convention from local-simulation-feasibility.md sketch C: large
+        # artefacts go to upload-artifact with a stage-typed name.
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-merge-sboms
+          path: |
+            sbom.cdx.json
+            sbom.spdx.json
+          retention-days: 90
+
+      - name: dependency-track upload (cyclonedx)
+        # Skips when the URL isn't configured — fine for sim runs without
+        # the local stack reachable.
+        if: ${{ inputs.dependency-track-url != '' }}
+        env:
+          DT_URL: ${{ inputs.dependency-track-url }}
+          DT_KEY: ${{ secrets.DEPENDENCY_TRACK_API_KEY }}
+          DT_PROJECT: ${{ inputs.dependency-track-project-name }}
+          DT_VERSION: ${{ inputs.dependency-track-project-version || github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DT_KEY:-}" ]; then
+            echo "::warning::DEPENDENCY_TRACK_API_KEY not set — skipping upload."
+            exit 0
+          fi
+          # Auto-create the project if it doesn't exist; auto-version per SHA.
+          curl -fsS -X POST "$DT_URL/api/v1/bom" \
+            -H "X-API-Key: $DT_KEY" \
+            -F "autoCreate=true" \
+            -F "projectName=$DT_PROJECT" \
+            -F "projectVersion=$DT_VERSION" \
+            -F "bom=@sbom.cdx.json"
