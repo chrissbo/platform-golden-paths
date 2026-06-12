@@ -80,7 +80,7 @@ jobs:
           cache: true
 
       - name: setup ko
-        uses: ko-build/setup-ko@v0.7
+        uses: ko-build/setup-ko@v0.9
 
       - name: log in to ghcr
         # ko reads $DOCKER_CONFIG / docker login state. We log in via the
@@ -112,7 +112,7 @@ jobs:
           echo "digest=$digest" | tee -a "$GITHUB_OUTPUT"
 
       - name: install syft
-        uses: anchore/sbom-action/download-syft@v0.17.5
+        uses: anchore/sbom-action/download-syft@v0.24.0
 
       - name: generate SBOMs
         env:
