@@ -1,0 +1,42 @@
+# Validate workflow YAML on PRs to platform-golden-paths.
+#
+# Background: golden-paths hosts reusable workflows; they only fire when
+# called from a service repo, so PRs to *this* repo have nothing else to
+# gate on. Layer A auto-merge with no required checks would merge
+# instantly — that defeats the point.
+#
+# This workflow runs actionlint (static analyser for GitHub Actions YAML)
+# on every PR. It catches workflow syntax errors, unrecognised contexts,
+# and shellcheck issues in run: blocks before they reach a calling repo
+# where they would surface as "every service repo's CI is broken."
+
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install actionlint
+        run: |
+          set -euo pipefail
+          # Pin to v1.7.7 — bump via Renovate / Dependabot.
+          curl -fsSL -o actionlint.tar.gz \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz
+          tar -xzf actionlint.tar.gz actionlint
+          install -m 0755 actionlint /usr/local/bin/actionlint
+
+      - name: run actionlint
+        run: actionlint -color
