@@ -8,6 +8,14 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # Group minor + patch bumps into a single PR per week so Layer A
+    # auto-merge has something coherent to act on. Major bumps stay in
+    # their own PRs (default behaviour) — those need human review.
+    groups:
+      ci-actions-minor:
+        update-types:
+          - "minor"
+          - "patch"
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
