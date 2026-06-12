@@ -73,7 +73,7 @@ jobs:
 
       - name: upload semgrep sarif
         if: always()  # populate Security tab even when the gate fails
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: semgrep.sarif
           category: semgrep
@@ -105,7 +105,7 @@ jobs:
 
       - name: upload govulncheck sarif
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: govulncheck.sarif
           category: govulncheck
