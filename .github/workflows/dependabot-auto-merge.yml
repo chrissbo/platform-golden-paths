@@ -108,7 +108,7 @@ jobs:
           2. Check whether anything in this repo uses a removed/changed API.
           3. Wait for CI to go green, then merge manually.
 
-          💡 To get an AI-generated summary of the breaking changes inline on this PR, comment \`/review\` (requires \`ANTHROPIC_API_KEY\` to be set on the repo — see Mode 2 in \`research/cicd-toolchain/ai-assisted-developer-workflows.md\`).
+          💡 For a summary of the breaking changes, see the PR-Agent review on this PR (Mode 2 in \`research/cicd-toolchain/ai-assisted-developer-workflows.md\`). If no review is present, \`ANTHROPIC_API_KEY\` is not set on the repo — comment \`/review\` once it is.
 
           *This comment is posted once per PR; force-pushes from Dependabot won't duplicate it.*
           EOF
