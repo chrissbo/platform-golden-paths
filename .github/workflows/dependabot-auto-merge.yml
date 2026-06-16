@@ -7,7 +7,10 @@
 #      GitHub's native auto-merge with the squash strategy. Auto-merge waits
 #      for required status checks to pass before actually merging — that's
 #      what makes Layer A safe.
-#   4. Major bumps (and anything else) are left for human review.
+#   4. Major bumps (and anything else) are left for human review. We post a
+#      single explanatory skip comment per PR. The comment is deduped via a
+#      hidden HTML marker so re-runs (e.g. after a Dependabot rebase
+#      force-push) don't pile up duplicate comments in the PR thread.
 #
 # Notes on permissions:
 #   - We use 'pull_request_target' because Dependabot PRs otherwise run with
@@ -57,17 +60,61 @@ jobs:
           set -euo pipefail
           gh pr merge --auto --squash "$PR_URL"
 
-      - name: comment if not auto-mergeable
+      - name: post skip comment if not auto-mergeable
         # Major bumps and other update types: leave a one-line note so
-        # reviewers know why the bot did not click auto-merge. Skipping
-        # this when the merge already succeeded keeps PR threads clean.
+        # reviewers know why the bot did not click auto-merge. We dedupe via
+        # a hidden HTML marker — if a comment with that marker already
+        # exists on this PR, we skip posting a new one. Without dedupe, every
+        # Dependabot force-push (recreate, auto-rebase) fires another
+        # 'synchronize' event and re-runs this job, piling up duplicates.
         if: >-
           ${{ steps.meta.outputs.update-type != 'version-update:semver-minor'
              && steps.meta.outputs.update-type != 'version-update:semver-patch' }}
         env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
           UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          DEP_NAMES: ${{ steps.meta.outputs.dependency-names }}
+          PREV_VERSION: ${{ steps.meta.outputs.previous-version }}
+          NEW_VERSION: ${{ steps.meta.outputs.new-version }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh pr comment "$PR_URL" --body "Layer A auto-merge skipped — update type \`${UPDATE_TYPE}\` requires human review."
+
+          MARKER="<!-- layer-a-skip-comment -->"
+
+          # Skip if a marker comment already exists on this PR.
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"${MARKER}\"))] | length")
+          if [ "${existing}" -gt 0 ]; then
+            echo "Skip comment already present on PR #${PR_NUMBER}; not posting again."
+            exit 0
+          fi
+
+          # Translate the metadata update-type to plain English.
+          case "${UPDATE_TYPE}" in
+            version-update:semver-major) human_type="major" ;;
+            *)                           human_type="${UPDATE_TYPE}" ;;
+          esac
+
+          body=$(cat <<EOF
+          ${MARKER}
+          🤖 **Layer A auto-merge skipped — needs a human reviewer.**
+
+          This PR is a **${human_type}** version bump (\`${PREV_VERSION}\` → \`${NEW_VERSION}\` for \`${DEP_NAMES}\`). Major bumps may include breaking changes, so the bot won't merge them on its own.
+
+          **What a reviewer should do:**
+          1. Skim the upstream release notes / changelog (linked in the PR description).
+          2. Check whether anything in this repo uses a removed/changed API.
+          3. Wait for CI to go green, then merge manually.
+
+          💡 To get an AI-generated summary of the breaking changes inline on this PR, comment \`/review\` (requires \`ANTHROPIC_API_KEY\` to be set on the repo — see Mode 2 in \`research/cicd-toolchain/ai-assisted-developer-workflows.md\`).
+
+          *This comment is posted once per PR; force-pushes from Dependabot won't duplicate it.*
+          EOF
+          )
+
+          gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            -f body="${body}" \
+            > /dev/null
+          echo "Posted skip comment on PR #${PR_NUMBER}."
