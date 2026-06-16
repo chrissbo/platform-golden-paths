@@ -16,6 +16,13 @@ on:
     secrets:
       ANTHROPIC_API_KEY:
         required: false
+  # Also run directly on PRs and PR comments in this repo, so PR-Agent
+  # auto-reviews on PR open and responds to /review, /describe, /ask, etc.
+  # The caller flow (workflow_call) is what ledger-service uses; these
+  # extra triggers are what makes PR-Agent work on platform-golden-paths
+  # PRs themselves.
+  pull_request:
+  issue_comment:
 
 permissions:
   contents: read
@@ -27,7 +34,13 @@ jobs:
     name: ai review (pr-agent)
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: ${{ github.event_name == 'pull_request' }}
+    # Run on PR events, and on issue_comment events that are actually on a
+    # PR (not a plain issue) — issue_comment.pull_request is non-null only
+    # for PR comments. Skip every other case to avoid spurious runs.
+    if: >-
+      ${{ github.event_name == 'pull_request' ||
+          github.event_name == 'workflow_call' ||
+          (github.event_name == 'issue_comment' && github.event.issue.pull_request != null) }}
     # 'secrets' is not allowed in if: expressions, so we surface it via env
     # and branch in shell. The actual Anthropic key remains inside env on the
     # one step that needs it.
