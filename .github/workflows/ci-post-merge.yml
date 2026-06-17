@@ -71,7 +71,7 @@ jobs:
       digest: ${{ steps.publish.outputs.digest }}
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: setup-go
         uses: actions/setup-go@v5
