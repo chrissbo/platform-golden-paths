@@ -60,7 +60,7 @@ jobs:
         uses: qodo-ai/pr-agent@ffe1f89a4dafc7d8e88b9cf010a3233e30b49f43
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          CONFIG.MODEL: anthropic/claude-sonnet-4-5
+          CONFIG.MODEL: anthropic/claude-3-5-sonnet-20241022
           ANTHROPIC.KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # Be conservative — review only, no auto-improve commits, no
           # describe-overwrite. We can dial up after we see the noise floor.
