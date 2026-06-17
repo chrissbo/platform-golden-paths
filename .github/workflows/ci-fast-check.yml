@@ -40,7 +40,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0  # gitleaks needs history; lint diff-aware also benefits
 
@@ -54,7 +54,7 @@ jobs:
         # The service repo doesn't carry its own .golangci.yml — the golden-paths
         # config is the source of truth. Sparse-checkout the just the config
         # at the pinned SHA so we don't pull untrusted files.
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: chrissbo/platform-golden-paths
           ref: main
@@ -78,7 +78,7 @@ jobs:
     timeout-minutes: 3
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -93,7 +93,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: setup-go
         uses: actions/setup-go@v6
@@ -110,7 +110,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: setup-go
         uses: actions/setup-go@v6
