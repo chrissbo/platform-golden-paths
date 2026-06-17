@@ -73,3 +73,20 @@ jobs:
           # noise; "compliance" here means acceptance-criteria compliance,
           # not DORA/MaRisk compliance.
           PR_REVIEWER.REQUIRE_TICKET_ANALYSIS_REVIEW: "false"
+          # Append a merge-verdict section to every review. Three states:
+          # 🟢 safe to merge / 🟡 have a second look / 🔴 do not merge.
+          # PR-Agent runs this through the same prompt as the rest of the
+          # review, so the verdict is grounded in the actual diff.
+          PR_REVIEWER.EXTRA_INSTRUCTIONS: |
+            At the end of every review, add a "Merge verdict" section with one of:
+              - 🟢 Safe to merge — low risk, behaviour preserved, no surprises in the diff.
+              - 🟡 Have a second look — non-trivial change, edge case, or unclear intent. State specifically what to double-check.
+              - 🔴 Do not merge — concrete problem (bug, regression, security issue, breaking change without migration). State the problem.
+
+            Base the verdict on:
+              - What the diff actually changes (not what the PR description claims).
+              - Whether tests cover the change.
+              - Whether the change crosses a stability boundary (major version, public API, security-sensitive code, infra/CI).
+              - Whether anything in this repo depends on something the diff removes or renames.
+
+            Be decisive. Default to 🟡 when uncertain, not 🟢.
