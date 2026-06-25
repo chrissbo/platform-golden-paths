@@ -123,7 +123,7 @@ jobs:
           syft "$IMAGE" -o spdx-json=sbom.spdx.json
 
       - name: install cosign
-        uses: sigstore/cosign-installer@v3.7.0
+        uses: sigstore/cosign-installer@v4.1.2
         with:
           cosign-release: 'v2.4.1'
 
