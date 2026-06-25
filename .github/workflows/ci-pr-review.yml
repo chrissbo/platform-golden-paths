@@ -57,7 +57,7 @@ jobs:
         if: ${{ env.HAS_ANTHROPIC_KEY == 'true' }}
         # Pinned to qodo-ai/pr-agent v0.36.0 — supply-chain hygiene for an
         # action that runs with secret access. Bump via Renovate / Dependabot.
-        uses: qodo-ai/pr-agent@e639d10a4df023b90668ec35796c2457c5f5db8d
+        uses: qodo-ai/pr-agent@85178bef87b7a03081cd30592a5aad100284f9a7
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CONFIG.MODEL: anthropic/claude-sonnet-4-5-20250929
