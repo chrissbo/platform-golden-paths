@@ -155,7 +155,7 @@ jobs:
       - name: upload SBOMs as workflow artifacts
         # Convention from local-simulation-feasibility.md sketch C: large
         # artefacts go to upload-artifact with a stage-typed name.
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: post-merge-sboms
           path: |
